@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Météo du jour</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Météo">
+<meta name="theme-color" content="#eef1ef">
+<style>
+:root{--bg:#eef1ef;--ink:#1d2a2f;--mute:#667579;--line:#d3dbd8;--rain:#2c6e8f;--rainbg:#d9e9f1}
+@media (prefers-color-scheme:dark){:root{--bg:#161d20;--ink:#e6eceb;--mute:#8d9ea2;--line:#2b373b;--rain:#7fc1e0;--rainbg:#1f3641}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.4 ui-rounded,"Avenir Next",system-ui,sans-serif}
+main{max-width:520px;margin:0 auto;padding:calc(env(safe-area-inset-top,0px) + 28px) 22px calc(env(safe-area-inset-bottom,0px) + 28px)}
+.hero small{color:var(--mute)}
+.hero .t{font-size:84px;font-weight:300;line-height:1;letter-spacing:-2px;margin:6px 0 10px}
+.badge{display:inline-block;padding:4px 12px;border-radius:99px;background:var(--rainbg);color:var(--rain);font-size:15px;font-weight:600}
+.badge.dry{background:transparent;color:var(--mute);padding-left:0;font-weight:400}
+ul{list-style:none;margin:34px 0 0;padding:0}
+li{display:flex;align-items:center;gap:12px;padding:13px 0;border-top:1px solid var(--line)}
+li .d{flex:1}
+li .d span{display:block;color:var(--mute);font-size:13px}
+li .temp{font-variant-numeric:tabular-nums;font-size:20px;min-width:64px;text-align:right}
+li .r{width:78px;text-align:right}
+li.today{color:var(--mute)}
+.bar{display:flex;gap:10px;margin-top:26px}
+button{flex:1;font:inherit;padding:12px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--ink)}
+#msg{color:var(--mute);font-size:13px;margin-top:14px;min-height:1.4em}
+</style>
+</head>
+<body>
+<main>
+  <section class="hero">
+    <small id="hl">Chargement…</small>
+    <div class="t" id="ht">–</div>
+    <span class="badge dry" id="hb"></span>
+  </section>
+  <ul id="list"></ul>
+  <div class="bar">
+    <button id="refresh">Actualiser</button>
+    <button id="export">Exporter CSV</button>
+  </div>
+  <div id="msg"></div>
+</main>
+<script>
+const LAT=52.04, LON=4.39, TZ="Europe/Amsterdam", RAIN_MM=0.1, KEY="meteo-log-v1";
+const $=id=>document.getElementById(id);
+const load=()=>{try{return JSON.parse(localStorage.getItem(KEY))||{}}catch(e){return {}}};
+const save=h=>{try{localStorage.setItem(KEY,JSON.stringify(h))}catch(e){}};
+const fmtDay=(iso,opt)=>new Date(iso+"T12:00:00").toLocaleDateString("fr-FR",opt);
+const rainTxt=d=>d.rain?"🌧 Pluie":"Sec";
+
+async function sync(){
+  const url=`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&daily=temperature_2m_mean,precipitation_sum&timezone=${TZ}&past_days=14&forecast_days=1`;
+  const r=await fetch(url); if(!r.ok) throw new Error(r.status);
+  const j=(await r.json()).daily, h=load(), today=j.time[j.time.length-1];
+  j.time.forEach((day,i)=>{
+    if(day===today||j.temperature_2m_mean[i]==null) return; // jours terminés uniquement
+    h[day]={t:j.temperature_2m_mean[i],mm:j.precipitation_sum[i]||0,rain:(j.precipitation_sum[i]||0)>=RAIN_MM};
+  });
+  save(h);
+  const i=j.time.length-1;
+  return {h,today:{day:today,t:j.temperature_2m_mean[i],mm:j.precipitation_sum[i]||0,rain:(j.precipitation_sum[i]||0)>=RAIN_MM}};
+}
+
+function render(h,today){
+  const days=Object.keys(h).sort().reverse();
+  const last=days[0];
+  if(last){
+    $("hl").textContent=fmtDay(last,{weekday:"long",day:"numeric",month:"long"});
+    $("ht").textContent=h[last].t.toFixed(1)+"°";
+    $("hb").textContent=h[last].rain?`🌧 Pluie · ${h[last].mm.toFixed(1)} mm`:"Pas de pluie";
+    $("hb").className="badge"+(h[last].rain?"":" dry");
+  }
+  let rows="";
+  if(today) rows+=`<li class="today"><div class="d">Aujourd’hui<span>en cours</span></div><div class="temp">${today.t.toFixed(1)}°</div><div class="r">${rainTxt(today)}</div></li>`;
+  days.slice(1).forEach(d=>{rows+=`<li><div class="d">${fmtDay(d,{weekday:"long"})}<span>${fmtDay(d,{day:"numeric",month:"short"})}</span></div><div class="temp">${h[d].t.toFixed(1)}°</div><div class="r">${rainTxt(h[d])}</div></li>`});
+  $("list").innerHTML=rows;
+}
+
+async function run(){
+  $("msg").textContent="";
+  let h=load(),today=null;
+  render(h,null);
+  try{({h,today}=await sync());$("msg").textContent=`${Object.keys(h).length} jours enregistrés sur cet iPhone.`}
+  catch(e){$("msg").textContent="Hors ligne : historique local affiché."}
+  render(h,today);
+}
+
+$("refresh").onclick=run;
+$("export").onclick=async()=>{
+  const h=load(),csv="date,temperature_moyenne_C,precipitation_mm,pluie\n"+Object.keys(h).sort().map(d=>`${d},${h[d].t.toFixed(1)},${h[d].mm.toFixed(1)},${h[d].rain?"oui":"non"}`).join("\n");
+  try{ if(navigator.share){await navigator.share({title:"meteo.csv",text:csv});return} }catch(e){return}
+  try{await navigator.clipboard.writeText(csv);$("msg").textContent="CSV copié dans le presse-papiers."}catch(e){$("msg").textContent="Export impossible."}
+};
+if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)run()});
+run();
+</script>
+</body>
+</html>
